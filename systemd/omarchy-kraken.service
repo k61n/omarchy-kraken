@@ -1,0 +1,14 @@
+[Unit]
+Description=Restore Kraken cooler settings at login and after resume
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@ROOT@/bin/krakenctl watch
+Environment=PATH=/usr/share/omarchy/bin:/usr/local/bin:/usr/bin
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,280 @@
+#!/usr/bin/python3
+"""Apply and remember Kraken cooling profiles and LCD images via liquidctl."""
+
+import argparse
+import fcntl
+import glob
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+PROFILES_FILE = Path(__file__).resolve().parent.parent / "profiles.json"
+HOME = Path.home()
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy-kraken"
+STATE_FILE = STATE_DIR / "state.json"
+LOCK_FILE = STATE_DIR / "lock"
+IMAGE_DIR = STATE_DIR / "images"
+
+DEFAULT_STATE = {"profile": "auto", "screen": {"mode": "liquid"}}
+LCD_SIZE = (320, 320)  # Kraken Z53/Z63/Z73
+LCD_MEMORY_LIMIT = 24_000_000  # bytes liquidctl accepts for one GIF
+NZXT_HWMON_MARKER = ":1E71:"
+IMAGE_EXTENSIONS = "png jpg jpeg gif webp bmp"
+RESTORE_ATTEMPTS = 15
+RESTORE_RETRY_SEC = 2
+LIQUIDCTL_TIMEOUT_SEC = 180
+
+
+class KrakenError(Exception):
+    pass
+
+
+def load_profiles():
+    return json.loads(PROFILES_FILE.read_text())
+
+
+def load_state():
+    try:
+        return {**DEFAULT_STATE, **json.loads(STATE_FILE.read_text())}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return dict(DEFAULT_STATE)
+
+
+def save_state(**changes):
+    state = {**load_state(), **changes}
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2) + "\n")
+    os.replace(tmp, STATE_FILE)
+
+
+def liquidctl(*args):
+    # Sysfs hwmon writes need root, so go through hidraw/USB (granted to the
+    # seat user by liquidctl's udev rule) instead of the kernel driver.
+    command = ["liquidctl", "--match", "Kraken", "--direct-access", *args]
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_FILE, "w") as lock:
+        # The device can't take overlapping commands, and uploads take seconds.
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=LIQUIDCTL_TIMEOUT_SEC)
+        except subprocess.TimeoutExpired:
+            raise KrakenError(f"liquidctl timed out: {' '.join(args)}")
+    # liquidctl logs some failures, like a rejected LCD upload, yet still exits 0.
+    errors = [line for line in result.stderr.splitlines() if line.startswith("ERROR")]
+    if result.returncode != 0 or errors:
+        raise KrakenError(errors[-1] if errors else f"liquidctl failed: {' '.join(args)}")
+
+
+def apply_profile(name):
+    profiles = load_profiles()
+    if name not in profiles:
+        raise KrakenError(f"unknown profile '{name}' (have: {', '.join(profiles)})")
+    for channel in ("pump", "fan"):
+        points = [str(value) for point in profiles[name][channel] for value in point]
+        liquidctl("set", channel, "speed", *points)
+
+
+def apply_screen(screen):
+    if screen["mode"] == "liquid":
+        liquidctl("set", "lcd", "screen", "liquid")
+        return
+    if not Path(screen["path"]).is_file():
+        raise KrakenError(f"saved image is missing: {screen['path']}")
+    liquidctl("set", "lcd", "screen", screen["mode"], screen["path"])
+
+
+def prepare_image(source):
+    """Center-crop to the square LCD (liquidctl would stretch) and keep a private copy."""
+    from PIL import Image, ImageOps, ImageSequence
+
+    source = Path(source).expanduser()
+    if not source.is_file():
+        raise KrakenError(f"no such file: {source}")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
+
+    def fit(frame):
+        rgba = frame.convert("RGBA")
+        flat = Image.new("RGB", rgba.size, "black")
+        flat.paste(rgba, mask=rgba.getchannel("A"))
+        return ImageOps.fit(flat, LCD_SIZE, Image.Resampling.LANCZOS)
+
+    try:
+        with Image.open(source) as image:
+            animated = getattr(image, "is_animated", False)
+            mode, suffix = ("gif", "gif") if animated else ("static", "png")
+            target = IMAGE_DIR / f"{digest}.{suffix}"
+            if not target.exists():
+                IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+                tmp = target.with_suffix(".tmp")
+                if animated:
+                    frames, durations = [], []
+                    for frame in ImageSequence.Iterator(image):
+                        frames.append(fit(frame))
+                        durations.append(frame.info.get("duration") or 100)
+                    frames[0].save(tmp, format="GIF", save_all=True, append_images=frames[1:],
+                                   duration=durations, loop=0)
+                else:
+                    fit(image).save(tmp, format="PNG")
+                os.replace(tmp, target)
+    except OSError as error:
+        raise KrakenError(f"can't read image {source.name}: {error}")
+
+    if animated and target.stat().st_size >= LCD_MEMORY_LIMIT:
+        target.unlink()
+        raise KrakenError(f"{source.name} is over the 24 MB the LCD can hold, even at 320×320")
+    return {"mode": mode, "path": str(target), "source": str(source)}
+
+
+def remove_unused_images(keep=None):
+    for image in IMAGE_DIR.glob("*"):
+        if str(image) != keep:
+            image.unlink(missing_ok=True)
+
+
+def set_image(source):
+    screen = prepare_image(source)
+    apply_screen(screen)
+    save_state(screen=screen)
+    remove_unused_images(keep=screen["path"])
+
+
+def restore(attempts=RESTORE_ATTEMPTS):
+    """Reapply saved settings, waiting for the device and its seat ACL to appear."""
+    state = load_state()
+    for attempt in range(1, attempts + 1):
+        try:
+            liquidctl("initialize")
+            apply_profile(state["profile"])
+            apply_screen(state["screen"])
+            return
+        except KrakenError:
+            if attempt == attempts:
+                raise
+            time.sleep(RESTORE_RETRY_SEC)
+
+
+def notify_failure(message):
+    if shutil.which("omarchy"):
+        subprocess.run(["omarchy", "notification", "send", "-u", "critical", "-g", "󰈐",
+                        "Kraken settings not restored", message], check=False)
+
+
+def restore_and_report():
+    try:
+        restore()
+        print("restored", flush=True)
+    except KrakenError as error:
+        print(f"restore failed: {error}", file=sys.stderr, flush=True)
+        notify_failure(str(error))
+
+
+def find_hwmon():
+    for hwmon in glob.glob("/sys/class/hwmon/hwmon*"):
+        if NZXT_HWMON_MARKER in os.path.realpath(f"{hwmon}/device"):
+            return Path(hwmon)
+    return None
+
+
+def read_sensors():
+    # Read the kernel driver's cached values: cheap and never contends with
+    # liquidctl for the device, so this is safe to poll from the bar.
+    hwmon = find_hwmon()
+    if hwmon is None:
+        return None
+    try:
+        read = lambda name: int((hwmon / name).read_text())
+        return {
+            "liquid": round(read("temp1_input") / 1000, 1),
+            "pumpRpm": read("fan1_input"),
+            "pumpDuty": round(read("pwm1") * 100 / 255),
+            "fanRpm": read("fan2_input"),
+            "fanDuty": round(read("pwm2") * 100 / 255),
+        }
+    except OSError:
+        return None  # stale or unplugged
+
+
+def cmd_status(_args):
+    state = load_state()
+    profiles = load_profiles()
+    print(json.dumps({
+        "sensors": read_sensors(),
+        "profile": state["profile"],
+        "profiles": [{"id": key, "label": value["label"]} for key, value in profiles.items()],
+        "screen": state["screen"],
+    }))
+
+
+def cmd_profile(args):
+    apply_profile(args.name)
+    save_state(profile=args.name)
+
+
+def cmd_screen(args):
+    if args.action == "liquid":
+        apply_screen({"mode": "liquid"})
+        save_state(screen={"mode": "liquid"})
+        remove_unused_images()
+    elif args.action == "set":
+        if not args.path:
+            raise KrakenError("screen set needs a file path")
+        set_image(args.path)
+    else:
+        picker = subprocess.run(["omarchy", "file", "select", "--title", "Kraken display image",
+                                 "--extensions", IMAGE_EXTENSIONS], capture_output=True, text=True)
+        if picker.returncode == 1:
+            return  # nothing picked
+        if picker.returncode != 0:
+            raise KrakenError(picker.stderr.strip() or "file chooser failed")
+        set_image(picker.stdout.strip())
+
+
+def cmd_restore(_args):
+    restore()
+
+
+def cmd_watch(_args):
+    """Restore now, then again after every resume (the cooler can lose power in sleep)."""
+    restore_and_report()
+    while True:
+        monitor = subprocess.Popen(
+            ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1",
+             "--object-path", "/org/freedesktop/login1"],
+            stdout=subprocess.PIPE, text=True)
+        for line in monitor.stdout:
+            if "PrepareForSleep" in line and "(false" in line:
+                restore_and_report()
+        monitor.wait()
+        time.sleep(RESTORE_RETRY_SEC)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("status", help="print sensors and saved settings as JSON").set_defaults(run=cmd_status)
+    profile = commands.add_parser("profile", help="apply and remember a cooling profile")
+    profile.add_argument("name")
+    profile.set_defaults(run=cmd_profile)
+    screen = commands.add_parser("screen", help="change the LCD: pick, set <path>, or liquid")
+    screen.add_argument("action", choices=["pick", "set", "liquid"])
+    screen.add_argument("path", nargs="?")
+    screen.set_defaults(run=cmd_screen)
+    commands.add_parser("restore", help="reapply saved settings").set_defaults(run=cmd_restore)
+    commands.add_parser("watch", help="restore now and after each resume").set_defaults(run=cmd_watch)
+    args = parser.parse_args()
+    try:
+        args.run(args)
+    except KrakenError as error:
+        print(f"krakenctl: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
