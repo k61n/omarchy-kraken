@@ -47,6 +47,11 @@ Panel {
     return ""
   }
 
+  // Padded so the columns line up across rows in the bar's monospace font.
+  function speedRow(label, rpm, percent) {
+    return label.padEnd(4) + " " + String(rpm).padStart(4) + " rpm · " + String(percent).padStart(3) + "%"
+  }
+
   function refresh() {
     if (!statusProc.running) statusProc.running = true
   }
@@ -181,7 +186,8 @@ Panel {
           title: "NZXT Kraken"
           meta: root.sensors ? "Liquid " + root.sensors.liquid.toFixed(1) + "°C" : "Cooler not detected"
           detail: root.sensors
-            ? "Pump " + root.sensors.pumpRpm + " rpm · Fan " + root.sensors.fanRpm + " rpm"
+            ? speedRow("Pump", root.sensors.pumpRpm, root.sensors.pumpPercent) + "\n"
+              + speedRow("Fan", root.sensors.fanRpm, root.sensors.fanPercent)
             : ""
           foreground: root.foreground
           fontFamily: root.fontFamily

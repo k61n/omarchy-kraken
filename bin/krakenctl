@@ -28,6 +28,10 @@ IMAGE_EXTENSIONS = "png jpg jpeg gif webp bmp"
 RESTORE_ATTEMPTS = 15
 RESTORE_RETRY_SEC = 2
 LIQUIDCTL_TIMEOUT_SEC = 180
+# Rated top speeds. The hwmon driver reports every Kraken Z as "z53", so the model
+# can't be detected; the fan value is for the stock 120 mm fans (Z53, Z73).
+PUMP_MAX_RPM = 2800
+FAN_MAX_RPM = 2000
 
 
 class KrakenError(Exception):
@@ -181,6 +185,11 @@ def find_hwmon():
     return None
 
 
+def percent_of_max(rpm, max_rpm):
+    # Rated speeds carry a tolerance, so a unit can run slightly above them.
+    return min(100, round(rpm * 100 / max_rpm))
+
+
 def read_sensors():
     # Read the kernel driver's cached values: cheap and never contends with
     # liquidctl for the device, so this is safe to poll from the bar.
@@ -192,8 +201,10 @@ def read_sensors():
         return {
             "liquid": round(read("temp1_input") / 1000, 1),
             "pumpRpm": read("fan1_input"),
+            "pumpPercent": percent_of_max(read("fan1_input"), PUMP_MAX_RPM),
             "pumpDuty": round(read("pwm1") * 100 / 255),
             "fanRpm": read("fan2_input"),
+            "fanPercent": percent_of_max(read("fan2_input"), FAN_MAX_RPM),
             "fanDuty": round(read("pwm2") * 100 / 255),
         }
     except OSError:
