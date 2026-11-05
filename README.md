@@ -28,12 +28,27 @@ Or from a terminal:
 omarchy plugin add https://github.com/k61n/omarchy-kraken.git --enable
 ```
 
-Enabling the plugin applies the saved settings straight away. On a new install, that's
-the Auto profile and the temperature display.
+> [!WARNING]
+> Enabling the plugin applies its saved settings straight away, replacing the cooler's
+> current curve and display. On a new install, that's the Auto profile and the temperature
+> display. Removing the plugin doesn't bring the previous curve back.
 
-Update with `omarchy plugin update k61n.kraken` and remove with **Remove Plugin** or
-`omarchy plugin remove k61n.kraken`. Saved settings stay in `~/.local/state/omarchy-kraken`,
-and the cooler keeps its current curve until power-off.
+Update with `omarchy plugin update k61n.kraken`, then run `omarchy restart shell`.
+
+## Remove
+
+Use **Remove Plugin** in the menu, or `omarchy plugin remove k61n.kraken`. The cooler keeps
+its current curve until power-off and its display keeps the current image, and saved settings
+and image copies stay in `~/.local/state/omarchy-kraken`.
+
+To remove everything, reset the display first:
+
+```bash
+liquidctl --match "Kraken Z" set lcd screen liquid
+omarchy plugin remove k61n.kraken
+rm -rf ~/.local/state/omarchy-kraken
+rm -f "$XDG_RUNTIME_DIR/omarchy-kraken-restored"
+```
 
 ## Development
 
