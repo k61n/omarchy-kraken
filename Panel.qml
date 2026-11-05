@@ -7,8 +7,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "kk.kraken"
-  ipcTarget: "kk.kraken"
+  moduleName: "k61n.kraken"
+  ipcTarget: "k61n.kraken"
 
   readonly property string ctl: decodeURIComponent(Qt.resolvedUrl("bin/krakenctl").toString().replace("file://", ""))
 

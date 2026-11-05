@@ -2,12 +2,14 @@
 """Apply and remember Kraken cooling profiles and LCD images via liquidctl."""
 
 import argparse
+import ctypes
 import fcntl
 import glob
 import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -19,6 +21,9 @@ STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "oma
 STATE_FILE = STATE_DIR / "state.json"
 LOCK_FILE = STATE_DIR / "lock"
 IMAGE_DIR = STATE_DIR / "images"
+# On tmpfs, so it lasts until reboot: a shell restart must not re-upload the image.
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+RESTORED_MARKER = RUNTIME_DIR / "omarchy-kraken-restored"
 
 DEFAULT_STATE = {"profile": "auto", "screen": {"mode": "liquid"}}
 LCD_SIZE = (320, 320)  # Kraken Z53/Z63/Z73
@@ -68,6 +73,8 @@ def liquidctl(*args):
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=LIQUIDCTL_TIMEOUT_SEC)
+        except FileNotFoundError:
+            raise KrakenError("liquidctl is not installed (sudo pacman -S liquidctl)")
         except subprocess.TimeoutExpired:
             raise KrakenError(f"liquidctl timed out: {' '.join(args)}")
     # liquidctl logs some failures, like a rejected LCD upload, yet still exits 0.
@@ -96,7 +103,10 @@ def apply_screen(screen):
 
 def prepare_image(source):
     """Center-crop to the square LCD (liquidctl would stretch) and keep a private copy."""
-    from PIL import Image, ImageOps, ImageSequence
+    try:
+        from PIL import Image, ImageOps, ImageSequence
+    except ImportError:
+        raise KrakenError("python-pillow is not installed (sudo pacman -S python-pillow)")
 
     source = Path(source).expanduser()
     if not source.is_file():
@@ -173,6 +183,7 @@ def notify_failure(message):
 def restore_and_report():
     try:
         restore()
+        RESTORED_MARKER.touch()
         print("restored", flush=True)
     except KrakenError as error:
         print(f"restore failed: {error}", file=sys.stderr, flush=True)
@@ -282,14 +293,21 @@ def cmd_restore(_args):
     restore()
 
 
+def die_with_parent():
+    PR_SET_PDEATHSIG = 1
+    ctypes.CDLL(None).prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+
+
 def cmd_watch(_args):
-    """Restore now, then again after every resume (the cooler can lose power in sleep)."""
-    restore_and_report()
+    """Restore once per boot and after every resume (the cooler can lose power in sleep)."""
+    die_with_parent()  # never outlive the shell, or a restarted one would add a second watcher
+    if not RESTORED_MARKER.exists():
+        restore_and_report()
     while True:
         monitor = subprocess.Popen(
             ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1",
              "--object-path", "/org/freedesktop/login1"],
-            stdout=subprocess.PIPE, text=True)
+            stdout=subprocess.PIPE, text=True, preexec_fn=die_with_parent)
         for line in monitor.stdout:
             if "PrepareForSleep" in line and "(false" in line:
                 restore_and_report()
@@ -309,7 +327,7 @@ def main():
     screen.add_argument("path", nargs="?")
     screen.set_defaults(run=cmd_screen)
     commands.add_parser("restore", help="reapply saved settings").set_defaults(run=cmd_restore)
-    commands.add_parser("watch", help="restore now and after each resume").set_defaults(run=cmd_watch)
+    commands.add_parser("watch", help="restore once per boot and after each resume").set_defaults(run=cmd_watch)
     args = parser.parse_args()
     try:
         args.run(args)

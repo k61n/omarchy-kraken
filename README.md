@@ -10,14 +10,40 @@ An Omarchy bar widget for NZXT Kraken Z coolers (Z53, Z63, Z73), built on
 
 ## Install
 
+Install the dependencies:
+
 ```bash
-./install.sh     # links the plugin, adds the widget, enables the service
-./uninstall.sh
+sudo pacman -S liquidctl python-pillow
 ```
 
-The plugin is a symlink to this folder, so keep the folder in place. After editing
-QML, run `omarchy restart shell`; the shell doesn't reliably hot-reload it through
-the symlink.
+Then open the Omarchy menu, go to **Setup > Plugins > Add Plugin**, and enter:
+
+```
+https://github.com/k61n/omarchy-kraken.git
+```
+
+Or from a terminal:
+
+```bash
+omarchy plugin add https://github.com/k61n/omarchy-kraken.git --enable
+```
+
+Enabling the plugin applies the saved settings straight away. On a new install, that's
+the Auto profile and the temperature display.
+
+Update with `omarchy plugin update k61n.kraken` and remove with **Remove Plugin** or
+`omarchy plugin remove k61n.kraken`. Saved settings stay in `~/.local/state/omarchy-kraken`,
+and the cooler keeps its current curve until power-off.
+
+## Development
+
+Replace the installed copy with a link to your checkout. Saving a file reloads the plugin;
+if a change doesn't apply, run `omarchy restart shell`.
+
+```bash
+ln -sfn "$PWD" ~/.config/omarchy/plugins/k61n.kraken
+omarchy plugin validate "$PWD"
+```
 
 ## Profiles
 
@@ -35,7 +61,6 @@ bin/krakenctl screen pick           # open the file chooser
 bin/krakenctl screen set ~/cat.gif
 bin/krakenctl screen liquid
 bin/krakenctl restore
-journalctl --user -u omarchy-kraken # restore log
 ```
 
 ## Notes
@@ -45,5 +70,9 @@ journalctl --user -u omarchy-kraken # restore log
 - Settings are applied through liquidctl's `--direct-access`, because the kernel
   driver's hwmon files are only writable by root. Sensors are read from hwmon, except
   NVIDIA GPU temperature, which comes from `nvidia-smi`.
-- The service runs in your user session, so between power-on and login the cooler
-  uses its firmware default.
+- Settings are restored by a background service inside the Omarchy shell, so they come
+  back after you log in. Until then, the cooler uses whatever it last had or its firmware
+  default.
+- Fan and pump percentages are of rated top speed: 2800 rpm for the pump and 2000 rpm for
+  the fan. The cooler can't report its model or fan type, so with Z63 or non-stock fans,
+  change `FAN_MAX_RPM` in `bin/krakenctl`.
