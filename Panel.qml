@@ -47,6 +47,13 @@ Panel {
     return ""
   }
 
+  function temperatures() {
+    var parts = ["Liquid " + sensors.liquid.toFixed(1) + "°C"]
+    if (sensors.cpu !== null) parts.push("CPU " + sensors.cpu.toFixed(0) + "°C")
+    if (sensors.gpu !== null) parts.push("GPU " + sensors.gpu.toFixed(0) + "°C")
+    return parts.join(" · ")
+  }
+
   // Padded so the columns line up across rows in the bar's monospace font.
   function speedRow(label, rpm, percent) {
     return label.padEnd(4) + " " + String(rpm).padStart(4) + " rpm · " + String(percent).padStart(3) + "%"
@@ -184,7 +191,7 @@ Panel {
         PanelHero {
           width: parent.width
           title: "NZXT Kraken"
-          meta: root.sensors ? "Liquid " + root.sensors.liquid.toFixed(1) + "°C" : "Cooler not detected"
+          meta: root.sensors ? root.temperatures() : "Cooler not detected"
           detail: root.sensors
             ? speedRow("Pump", root.sensors.pumpRpm, root.sensors.pumpPercent) + "\n"
               + speedRow("Fan", root.sensors.fanRpm, root.sensors.fanPercent)

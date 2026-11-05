@@ -28,6 +28,7 @@ IMAGE_EXTENSIONS = "png jpg jpeg gif webp bmp"
 RESTORE_ATTEMPTS = 15
 RESTORE_RETRY_SEC = 2
 LIQUIDCTL_TIMEOUT_SEC = 180
+GPU_QUERY_TIMEOUT_SEC = 2
 # Rated top speeds. The hwmon driver reports every Kraken Z as "z53", so the model
 # can't be detected; the fan value is for the stock 120 mm fans (Z53, Z73).
 PUMP_MAX_RPM = 2800
@@ -185,6 +186,35 @@ def find_hwmon():
     return None
 
 
+def hwmon_temp(driver):
+    # temp1 is the main reading on each driver used here (k10temp Tctl, coretemp
+    # package, amdgpu edge).
+    for hwmon in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        try:
+            if Path(hwmon, "name").read_text().strip() == driver:
+                return round(int(Path(hwmon, "temp1_input").read_text()) / 1000, 1)
+        except (OSError, ValueError):
+            pass
+    return None
+
+
+def read_cpu_temp():
+    return hwmon_temp("k10temp") or hwmon_temp("coretemp")
+
+
+def read_gpu_temp():
+    # The NVIDIA driver has no hwmon interface. Checked first so that a discrete
+    # card wins over an integrated AMD GPU.
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=GPU_QUERY_TIMEOUT_SEC,
+        )
+        return float(result.stdout.splitlines()[0])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return hwmon_temp("amdgpu")
+
+
 def percent_of_max(rpm, max_rpm):
     # Rated speeds carry a tolerance, so a unit can run slightly above them.
     return min(100, round(rpm * 100 / max_rpm))
@@ -206,6 +236,8 @@ def read_sensors():
             "fanRpm": read("fan2_input"),
             "fanPercent": percent_of_max(read("fan2_input"), FAN_MAX_RPM),
             "fanDuty": round(read("pwm2") * 100 / 255),
+            "cpu": read_cpu_temp(),
+            "gpu": read_gpu_temp(),
         }
     except OSError:
         return None  # stale or unplugged

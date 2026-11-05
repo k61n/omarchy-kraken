@@ -3,7 +3,7 @@
 An Omarchy bar widget for NZXT Kraken Z coolers (Z53, Z63, Z73), built on
 [liquidctl](https://github.com/liquidctl/liquidctl).
 
-- Fan icon in the bar. Click it for live temperature and fan speeds.
+- Fan icon in the bar. Click it for live liquid, CPU and GPU temperatures and fan speeds.
 - Cooling profiles: Silent, Auto, Performance.
 - Change the image or GIF on the cooler's display, or go back to the temperature readout.
 - Saved settings are reapplied at login and after resume.
@@ -43,6 +43,7 @@ journalctl --user -u omarchy-kraken # restore log
 - Images are center-cropped to 320×320 and copied to `~/.local/state/omarchy-kraken/images`,
   so restores keep working if the original file moves. GIFs can be up to 24 MB after resizing.
 - Settings are applied through liquidctl's `--direct-access`, because the kernel
-  driver's hwmon files are only writable by root. Sensors are read from hwmon.
+  driver's hwmon files are only writable by root. Sensors are read from hwmon, except
+  NVIDIA GPU temperature, which comes from `nvidia-smi`.
 - The service runs in your user session, so between power-on and login the cooler
   uses its firmware default.
