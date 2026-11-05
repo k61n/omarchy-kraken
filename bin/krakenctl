@@ -28,7 +28,7 @@ RESTORED_MARKER = RUNTIME_DIR / "omarchy-kraken-restored"
 DEFAULT_STATE = {"profile": "auto", "screen": {"mode": "liquid"}}
 LCD_SIZE = (320, 320)  # Kraken Z53/Z63/Z73
 LCD_MEMORY_LIMIT = 24_000_000  # bytes liquidctl accepts for one GIF
-NZXT_HWMON_MARKER = ":1E71:"
+KRAKEN_Z_HWMON_MARKER = ":1E71:3008."
 IMAGE_EXTENSIONS = "png jpg jpeg gif webp bmp"
 RESTORE_ATTEMPTS = 15
 RESTORE_RETRY_SEC = 2
@@ -66,7 +66,7 @@ def save_state(**changes):
 def liquidctl(*args):
     # Sysfs hwmon writes need root, so go through hidraw/USB (granted to the
     # seat user by liquidctl's udev rule) instead of the kernel driver.
-    command = ["liquidctl", "--match", "Kraken", "--direct-access", *args]
+    command = ["liquidctl", "--match", "Kraken Z", "--direct-access", *args]
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOCK_FILE, "w") as lock:
         # The device can't take overlapping commands, and uploads take seconds.
@@ -192,7 +192,7 @@ def restore_and_report():
 
 def find_hwmon():
     for hwmon in glob.glob("/sys/class/hwmon/hwmon*"):
-        if NZXT_HWMON_MARKER in os.path.realpath(f"{hwmon}/device"):
+        if KRAKEN_Z_HWMON_MARKER in os.path.realpath(f"{hwmon}/device"):
             return Path(hwmon)
     return None
 
