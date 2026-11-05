@@ -32,6 +32,7 @@ KRAKEN_Z_HWMON_MARKER = ":1E71:3008."
 IMAGE_EXTENSIONS = "png jpg jpeg gif webp bmp"
 RESTORE_ATTEMPTS = 15
 RESTORE_RETRY_SEC = 2
+COOLER_WAIT_SEC = 10
 LIQUIDCTL_TIMEOUT_SEC = 180
 GPU_QUERY_TIMEOUT_SEC = 2
 # Rated top speeds. The hwmon driver reports every Kraken Z as "z53", so the model
@@ -197,7 +198,32 @@ def notify_failure(message):
                         "Kraken settings not restored", message], check=False)
 
 
+def cooler_present():
+    for vendor in glob.glob("/sys/bus/usb/devices/*/idVendor"):
+        device = Path(vendor).parent
+        try:
+            if (device / "idVendor").read_text().strip() == "1e71" \
+                    and (device / "idProduct").read_text().strip() == "3008":
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def wait_for_cooler():
+    # After resume, USB devices can take a moment to come back.
+    deadline = time.monotonic() + COOLER_WAIT_SEC
+    while not cooler_present():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(1)
+    return True
+
+
 def restore_and_report():
+    if not wait_for_cooler():
+        print("no cooler found, nothing to restore", flush=True)
+        return
     try:
         restore()
         RESTORED_MARKER.touch()
