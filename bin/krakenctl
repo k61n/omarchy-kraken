@@ -48,11 +48,28 @@ def load_profiles():
     return json.loads(PROFILES_FILE.read_text())
 
 
+def valid_screen(screen):
+    if not isinstance(screen, dict):
+        return False
+    if screen.get("mode") == "liquid":
+        return True
+    return screen.get("mode") in ("static", "gif") and isinstance(screen.get("path"), str)
+
+
 def load_state():
+    """Read saved settings, using the default for anything missing or invalid."""
     try:
-        return {**DEFAULT_STATE, **json.loads(STATE_FILE.read_text())}
-    except (FileNotFoundError, json.JSONDecodeError):
-        return dict(DEFAULT_STATE)
+        saved = json.loads(STATE_FILE.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    state = dict(DEFAULT_STATE)
+    if isinstance(saved.get("profile"), str) and saved["profile"] in load_profiles():
+        state["profile"] = saved["profile"]
+    if valid_screen(saved.get("screen")):
+        state["screen"] = saved["screen"]
+    return state
 
 
 def save_state(**changes):
