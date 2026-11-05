@@ -47,16 +47,13 @@ Panel {
     return ""
   }
 
-  function temperatures() {
-    var parts = ["Liquid " + sensors.liquid.toFixed(1) + "°C"]
-    if (sensors.cpu !== null) parts.push("CPU " + sensors.cpu.toFixed(0) + "°C")
-    if (sensors.gpu !== null) parts.push("GPU " + sensors.gpu.toFixed(0) + "°C")
-    return parts.join(" · ")
+  function temperature(value, decimals) {
+    return value === null ? "—" : value.toFixed(decimals) + "°C"
   }
 
-  // Padded so the columns line up across rows in the bar's monospace font.
-  function speedRow(label, rpm, percent) {
-    return label.padEnd(4) + " " + String(rpm).padStart(4) + " rpm · " + String(percent).padStart(3) + "%"
+  // Padded so the rpm and percent columns line up across rows in the bar's monospace font.
+  function speed(rpm, percent) {
+    return String(rpm).padStart(4) + " rpm · " + String(percent).padStart(3) + "%"
   }
 
   function refresh() {
@@ -111,6 +108,57 @@ Panel {
     if (!isHovered) return
     cursorActive = true
     cursorIndex = index
+  }
+
+  component SensorBlock: BorderSurface {
+    id: block
+    property var rows: []
+
+    implicitHeight: blockRows.implicitHeight + Style.space(16)
+    color: "transparent"
+    borderSpec: Border.controlSpec("normal", root.foreground, Commons.Color.accent)
+    radius: Style.cornerRadius
+
+    Column {
+      id: blockRows
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.margins: Style.space(8)
+      spacing: Style.space(4)
+
+      Repeater {
+        model: block.rows
+        Item {
+          required property var modelData
+          width: parent.width
+          implicitHeight: valueText.implicitHeight
+
+          Text {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: parent.modelData.label
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            font.letterSpacing: 1.2
+          }
+
+          Text {
+            id: valueText
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: parent.modelData.value
+            textFormat: Text.PlainText
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+      }
+    }
   }
 
   implicitWidth: button.implicitWidth
@@ -191,11 +239,7 @@ Panel {
         PanelHero {
           width: parent.width
           title: "NZXT Kraken"
-          meta: root.sensors ? root.temperatures() : "Cooler not detected"
-          detail: root.sensors
-            ? speedRow("Pump", root.sensors.pumpRpm, root.sensors.pumpPercent) + "\n"
-              + speedRow("Fan", root.sensors.fanRpm, root.sensors.fanPercent)
-            : ""
+          meta: root.sensors ? "" : "Cooler not detected"
           foreground: root.foreground
           fontFamily: root.fontFamily
           iconComponent: Component {
@@ -205,6 +249,37 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.display
             }
+          }
+        }
+
+        Row {
+          id: sensorRow
+          visible: root.sensors !== null
+          width: parent.width
+          spacing: Style.space(6)
+
+          readonly property real blockWidth: (width - spacing) / 2
+          readonly property real blockHeight: Math.max(temperatureBlock.implicitHeight, speedBlock.implicitHeight)
+
+          SensorBlock {
+            id: temperatureBlock
+            width: sensorRow.blockWidth
+            height: sensorRow.blockHeight
+            rows: root.sensors ? [
+              { label: "LIQUID", value: root.temperature(root.sensors.liquid, 1) },
+              { label: "CPU", value: root.temperature(root.sensors.cpu, 0) },
+              { label: "GPU", value: root.temperature(root.sensors.gpu, 0) }
+            ] : []
+          }
+
+          SensorBlock {
+            id: speedBlock
+            width: sensorRow.blockWidth
+            height: sensorRow.blockHeight
+            rows: root.sensors ? [
+              { label: "PUMP", value: root.speed(root.sensors.pumpRpm, root.sensors.pumpPercent) },
+              { label: "FAN", value: root.speed(root.sensors.fanRpm, root.sensors.fanPercent) }
+            ] : []
           }
         }
 
