@@ -5,7 +5,7 @@
   "version": "1.1.0",
   "author": "k61n",
   "license": "MIT",
-  "description": "Cooling profiles and LCD image for NZXT Kraken Z coolers, driven by liquidctl.",
+  "description": "Cooling profiles and LCD image for NZXT Kraken Z and Kraken 2023 Elite coolers, driven by liquidctl.",
   "kinds": ["bar-widget", "service"],
   "entryPoints": { "barWidget": "Panel.qml", "service": "Service.qml" },
   "barWidget": {
