@@ -15,6 +15,7 @@ Panel {
   readonly property string fanIcon: String.fromCodePoint(0xF0210)         // md-fan
   readonly property string imageIcon: String.fromCodePoint(0xF02E9)       // md-image
   readonly property string thermometerIcon: String.fromCodePoint(0xF050F) // md-thermometer
+  readonly property string infoIcon: String.fromCodePoint(0xF061A)        // md-chip
   readonly property var profileIcons: ({
     silent: String.fromCodePoint(0xF04B2),     // md-sleep
     auto: String.fromCodePoint(0xF006A),       // md-autorenew
@@ -34,6 +35,7 @@ Panel {
   readonly property bool busy: actionProc.running
   readonly property int changeImageIndex: profiles.length
   readonly property int liquidIndex: profiles.length + 1
+  readonly property int infoIndex: profiles.length + 2
 
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
@@ -83,10 +85,15 @@ Panel {
     run(["screen", "liquid"])
   }
 
+  function showInfo() {
+    run(["screen", "info"])
+  }
+
   function activateCursor() {
     if (cursorIndex < profiles.length) setProfile(profiles[cursorIndex].id)
     else if (cursorIndex === changeImageIndex) pickImage()
     else if (cursorIndex === liquidIndex) showLiquid()
+    else if (cursorIndex === infoIndex) showInfo()
   }
 
   function moveCursor(dx, dy) {
@@ -99,7 +106,7 @@ Panel {
     else if (dy < 0 && !inProfiles) cursorIndex = 0
     else if (dx !== 0) {
       var first = inProfiles ? 0 : changeImageIndex
-      var last = inProfiles ? profiles.length - 1 : liquidIndex
+      var last = inProfiles ? profiles.length - 1 : infoIndex
       cursorIndex = Math.max(first, Math.min(last, cursorIndex + dx))
     }
   }
@@ -355,8 +362,10 @@ Panel {
 
             Text {
               anchors.centerIn: parent
-              visible: root.screen.mode === "liquid"
-              text: root.sensors ? root.sensors.liquid.toFixed(0) + "°" : root.thermometerIcon
+              visible: root.screen.mode === "liquid" || root.screen.mode === "info"
+              text: !root.sensors ? root.thermometerIcon
+                : root.screen.mode === "info" && root.sensors.cpu !== null ? root.sensors.cpu.toFixed(0) + "°"
+                : root.sensors.liquid.toFixed(0) + "°"
               color: "white"
               font.family: root.fontFamily
               font.pixelSize: Style.font.display
@@ -390,6 +399,7 @@ Panel {
               width: parent.width
               text: root.busy ? "Working…"
                 : root.screen.mode === "liquid" ? "Liquid temperature"
+                : root.screen.mode === "info" ? "CPU, GPU and liquid"
                 : String(root.screen.source || "").split("/").pop()
               textFormat: Text.PlainText
               elide: Text.ElideMiddle
@@ -423,6 +433,20 @@ Panel {
               hasCursor: root.cursorActive && root.cursorIndex === root.liquidIndex
               onClicked: root.showLiquid()
               onHovered: function(h) { root.hover(root.liquidIndex, h) }
+            }
+
+            Button {
+              width: parent.width
+              iconText: root.infoIcon
+              text: "System info"
+              fontSize: Style.font.bodySmall
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              active: root.screen.mode === "info"
+              hasCursor: root.cursorActive && root.cursorIndex === root.infoIndex
+              onClicked: root.showInfo()
+              onHovered: function(h) { root.hover(root.infoIndex, h) }
             }
           }
         }
